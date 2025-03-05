@@ -41,7 +41,7 @@ The token flow analyzer identifies variables that affect token amounts in smart 
 slither-dataflow token-flow <contract_file.sol> <contract_name> <function_name> [amount_variable]
 
 # Example
-poetry run slither-dataflow taint tests/contracts/Vault.sol Vault deposit amount withdraw amount
+poetry run slither-dataflow token-flow tests/contracts/Vault.sol Vault withdraw amount
 ```
 
 Output:
@@ -86,7 +86,12 @@ Taint analysis will track the flow of potentially tainted data through a contrac
 ```bash
 # Future usage
 slither-dataflow taint <contract_file.sol> <contract_name> <entry_point> <taint_source>
+
+# Example
+poetry run slither-dataflow taint tests/contracts/Vault.sol Vault deposit amount withdraw amount
 ```
+
+
 
 ## Project Structure
 
