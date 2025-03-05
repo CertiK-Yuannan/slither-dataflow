@@ -6,8 +6,6 @@ from typing import Dict, List, Set
 
 from slither.analyses.data_dependency.data_dependency import is_dependent
 from slither.core.declarations import Contract, Function
-from slither.core.variables.state_variable import StateVariable
-from slither.core.variables.local_variable import LocalVariable
 
 from slither_dataflow.analyzer import DataFlowAnalyzer
 
@@ -65,7 +63,7 @@ class TokenFlowAnalyzer(DataFlowAnalyzer):
     
     def _find_input_parameters(self, function: Function, amount_var: str, result: Dict) -> None:
         """Find input parameters affecting the amount variable"""
-        # Check function parameters
+        # First, check if the amount variable is itself a parameter
         for param in function.parameters:
             if param.name == amount_var or param.name == f"_{amount_var}":
                 result["inputs"].append({
@@ -73,21 +71,83 @@ class TokenFlowAnalyzer(DataFlowAnalyzer):
                     "type": str(param.type)
                 })
         
-        # Find local variables derived from parameters
+        # Trace both forward and backward dependencies
+        # 1. Forward: Local variables derived from parameters
+        # 2. Backward: Parameters that affect the amount variable
+        
+        # Find all parameter and local variables 
+        all_params = {param.name: param for param in function.parameters}
+        
+        # Find the target variable assignments and usages
+        target_assignments = []
+        target_usages = []
+        
         for node in function.nodes:
-            for local_var in node.local_variables_written:
-                if local_var.name == amount_var:
-                    # Found a local variable for the amount
-                    if hasattr(node, 'expression'):
-                        expr = str(node.expression)
-                        if "=" in expr and local_var.name in expr.split("=")[0]:
-                            right_side = expr.split("=")[1].strip()
-                            
+            if hasattr(node, 'expression') and node.expression:
+                expr_str = str(node.expression)
+                
+                # Forward: Look for target being assigned
+                if "=" in expr_str and amount_var in expr_str.split("=")[0].strip():
+                    right_side = expr_str.split("=")[1].strip()
+                    target_assignments.append((node, right_side))
+                    
+                    # Add the local variable if it's our target
+                    for local_var in node.local_variables_written:
+                        if local_var.name == amount_var:
                             if not any(i["name"] == local_var.name for i in result["inputs"]):
                                 result["inputs"].append({
                                     "name": local_var.name,
                                     "type": str(local_var.type),
                                     "value": right_side
+                                })
+                
+                # Backward: Look for parameters used in computing the target
+                if amount_var in expr_str:
+                    target_usages.append(node)
+        
+        # For each assignment to the target, look for parameters on the right side
+        for node, right_side in target_assignments:
+            for param_name, param in all_params.items():
+                if param_name in right_side and not any(i["name"] == param_name for i in result["inputs"]):
+                    result["inputs"].append({
+                        "name": param_name,
+                        "type": str(param.type)
+                    })
+        
+        # Look for other variables assigned from our target (backward tracing)
+        for node in function.nodes:
+            if hasattr(node, 'expression') and node.expression:
+                expr_str = str(node.expression)
+                
+                # If this expression computes a value using our target variable
+                if "=" in expr_str and amount_var in expr_str.split("=")[1]:
+                    left_side = expr_str.split("=")[0].strip()
+                    
+                    # Find the local variable being assigned
+                    for local_var in node.local_variables_written:
+                        if local_var.name in left_side:
+                            # We found a variable derived from our target
+                            # Now we need to find parameters that affect this variable
+                            for param_name, param in all_params.items():
+                                # If this parameter directly affects our target
+                                # (Check all nodes for expressions using this parameter to compute the local variable)
+                                for check_node in function.nodes:
+                                    if (hasattr(check_node, 'expression') and 
+                                        param_name in str(check_node.expression) and 
+                                        local_var.name in str(check_node.expression)):
+                                        
+                                        if not any(i["name"] == param_name for i in result["inputs"]):
+                                            result["inputs"].append({
+                                                "name": param_name,
+                                                "type": str(param.type)
+                                            })
+                            
+                            # Add the derived variable to our inputs
+                            if not any(i["name"] == local_var.name for i in result["inputs"]):
+                                result["inputs"].append({
+                                    "name": local_var.name,
+                                    "type": str(local_var.type),
+                                    "value": f"derived from {amount_var}"
                                 })
     
     def _find_state_variables(self, contract: Contract, function: Function, amount_var: str, result: Dict) -> None:
