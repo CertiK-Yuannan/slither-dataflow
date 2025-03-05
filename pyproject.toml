@@ -1,0 +1,20 @@
+[project]
+name = "slither-dataflow"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "desp4c1to",email = "yyuannan@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "networkx (>=3.4.2,<4.0.0)"
+]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12.0"
+slither-analyzer = "^0.11.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
