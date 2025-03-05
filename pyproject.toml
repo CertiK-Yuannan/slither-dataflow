@@ -11,6 +11,7 @@ requires-python = ">=3.8"
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12.0"
 slither-analyzer = "^0.11.0"
+networkx = "^3.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
