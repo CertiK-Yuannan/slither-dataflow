@@ -1,68 +1,50 @@
-<<<<<<< HEAD
-# slither-dataflow
-## Token Flow Analyzer
+# Slither DataFlow Analysis
 
-A static analysis tool to trace token amount flows in Solidity smart contracts using Slither.
+A collection of data flow analysis tools for Solidity smart contracts built on top of [Slither](https://github.com/crytic/slither).
 
-### Overview
+## Overview
 
-Token Flow Analyzer identifies variables and code that influence token amounts in Solidity smart contracts. It analyzes:
+Slither DataFlow extends Slither's capabilities with specialized data flow analysis tools targeting specific security concerns in smart contracts. The project currently includes:
 
-1. Input parameters that affect token amounts
-2. State variables that are read or modified in relation to token amounts 
-3. Cross-function interactions that affect these state variables
+- **Token Flow Analysis**: Identifies variables that influence token amounts in transfer operations
+- **Taint Analysis**:  Tracks the flow of potentially tainted data through a contract
 
-This tool is useful for:
-- Security auditing of DeFi contracts
-- Understanding token flow in complex contracts
-- Identifying potential vulnerabilities in token handling
+## Installation
 
-### Installation
+### Prerequisites
 
-#### Prerequisites
+- Python 3.8+
+- [Poetry](https://python-poetry.org/docs/#installation)
 
-- Python 3.8 or higher
-- [Poetry](https://python-poetry.org/docs/#installation) for dependency management
+### Setup
 
-#### Setup
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/slither-dataflow.git
+cd slither-dataflow
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/yourusername/slither-dataflow.git
-   cd slither-dataflow
-   ```
+# Install dependencies
+poetry install
 
-2. Install dependencies using Poetry:
-   ```
-   poetry install
-   ```
-
-This will install all required dependencies, including Slither.
-
-### Usage
-
-Run the analyzer on a Solidity contract using:
-
-```
-poetry run python token_flow_analysis.py <contract_file.sol> <contract_name> <function_name> [amount_variable]
+# Activate the virtual environment
+poetry shell
 ```
 
-#### Parameters:
+## Usage
 
-- `contract_file.sol`: Path to the Solidity file
-- `contract_name`: Name of the contract to analyze
-- `function_name`: Name of the function to analyze for token flow
-- `amount_variable` (optional): Name of the variable to track (defaults to "amount")
+### Token Flow Analysis
 
-#### Example:
+The token flow analyzer identifies variables that affect token amounts in smart contracts.
 
+```bash
+# Basic usage
+slither-dataflow token-flow <contract_file.sol> <contract_name> <function_name> [amount_variable]
+
+# Example
+poetry run slither-dataflow taint tests/contracts/Vault.sol Vault deposit amount withdraw amount
 ```
-poetry run python token_flow_analysis.py Vault.sol Vault withdraw amount
-```
 
-This will analyze the `withdraw` function in the `Vault` contract, tracing all variables that affect the `amount` parameter.
-
-### Example Output
+Output:
 
 ```
 AMOUNT VARIABLE ANALYSIS
@@ -97,18 +79,34 @@ Target Variable: amount
         - amount
 ```
 
-## Features
+### Taint Analysis (Coming Soon)
 
-- **Input Parameter Tracking**: Identifies function parameters and local variables that influence token amounts
-- **State Variable Analysis**: Determines which state variables are read or modified in relation to token amounts
-- **Cross-Function Flow**: Traces how state variables are modified by other functions
-- **Special Handling for Common Patterns**: Automatically detects common token patterns like balance mappings
+Taint analysis will track the flow of potentially tainted data through a contract to identify security risks.
 
-## Limitations
+```bash
+# Future usage
+slither-dataflow taint <contract_file.sol> <contract_name> <entry_point> <taint_source>
+```
 
-- The analysis is static and may not capture all dynamic behaviors
-- Complex inheritance patterns might not be fully analyzed
-- External contract calls are not followed beyond the analyzed contract
+## Project Structure
+
+```
+slither-dataflow/
+├── slither_dataflow/         # Main package
+│   ├── analyzers/            # Specific analyzer implementations
+│   │   ├── token_flow.py     # Token flow analysis
+│   │   └── taint.py          # Taint analysis (future)
+│   └── utils/                # Utility functions
+├── tests/                    # Tests directory
+```
+
+## Extending the Framework
+
+New analyzers can be added by:
+
+1. Creating a new analyzer in the `slither_dataflow/analyzers/` directory
+2. Implementing the analyzer interface defined in `slither_dataflow/analyzer.py`
+3. Registering the analyzer in the CLI module
 
 ## Contributing
 
@@ -116,5 +114,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-[MIT License](LICENSE)
->>>>>>> 10c0245 (initial commit)
+This project is licensed under the MIT License - see the LICENSE file for details.

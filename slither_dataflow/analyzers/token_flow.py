@@ -1,49 +1,45 @@
-#!/usr/bin/env python3
+"""
+Token flow analyzer for tracking variables that affect token amounts
+"""
 
-from slither import Slither
+from typing import Dict, List, Set
+
 from slither.analyses.data_dependency.data_dependency import is_dependent
-from slither.core.declarations import Function, Contract
+from slither.core.declarations import Contract, Function
 from slither.core.variables.state_variable import StateVariable
 from slither.core.variables.local_variable import LocalVariable
-from slither.core.expressions import Identifier
 
-import sys
-import os
-from typing import Dict, Optional, List
+from slither_dataflow.analyzer import DataFlowAnalyzer
 
 
-class TokenAmountAnalyzer:
+class TokenFlowAnalyzer(DataFlowAnalyzer):
     """
-    A simplified tool for analyzing variables that affect token amounts in smart contracts
+    Analyzer for tracking variables that influence token amounts in smart contracts
     """
-    
-    def __init__(self, contract_file: str):
-        """Initialize the analyzer with a contract file"""
-        try:
-            self.slither = Slither(contract_file)
-            print(f"Loaded {contract_file}")
-        except Exception as e:
-            print(f"Error loading contract: {str(e)}")
-            sys.exit(1)
-    
-    def get_contract(self, contract_name: str) -> Optional[Contract]:
-        """Get a contract by name"""
-        contracts = self.slither.get_contract_from_name(contract_name)
-        return contracts[0] if contracts else None
-    
-    def analyze_amount_relevant_variables(self, contract: Contract, function_name: str, amount_var: str = "amount") -> Dict:
+
+    def analyze(self, contract: Contract, function_name: str, amount_var: str = "amount") -> Dict:
         """
-        Analyze variables relevant to the specified amount variable
+        Analyze variables relevant to the specified token amount
+        
+        Args:
+            contract: The contract to analyze
+            function_name: The function containing the token operation
+            amount_var: The variable representing the token amount
+            
+        Returns:
+            Dict: Analysis results including affected variables and their relationships
         """
+        # Main result structure
         result = {
             "function": function_name,
             "target_variable": amount_var,
             "inputs": [],
             "state_variables": [],
-            "variable_modifications": {}
+            "variable_modifications": {},
+            "cross_function_inputs": {}
         }
         
-        # Find the function
+        # Find the target function
         target_function = None
         for function in contract.functions:
             if function.name == function_name:
@@ -51,19 +47,34 @@ class TokenAmountAnalyzer:
                 break
         
         if not target_function:
-            print(f"Error: Function '{function_name}' not found in contract")
-            return result
+            raise ValueError(f"Function '{function_name}' not found in contract")
         
-        # Find input parameters affecting amount
-        for param in target_function.parameters:
+        # 1. Find input parameters affecting amount
+        self._find_input_parameters(target_function, amount_var, result)
+        
+        # 2. Find state variables affecting amount
+        self._find_state_variables(contract, target_function, amount_var, result)
+        
+        # 3. Find modifications across all functions
+        self._find_variable_modifications(contract, function_name, result)
+        
+        # 4. Trace inputs across functions
+        result["cross_function_inputs"] = self._trace_cross_function_inputs(contract, result)
+        
+        return result
+    
+    def _find_input_parameters(self, function: Function, amount_var: str, result: Dict) -> None:
+        """Find input parameters affecting the amount variable"""
+        # Check function parameters
+        for param in function.parameters:
             if param.name == amount_var or param.name == f"_{amount_var}":
                 result["inputs"].append({
                     "name": param.name,
                     "type": str(param.type)
                 })
         
-        # Find local variables derived from parameters or related to amount
-        for node in target_function.nodes:
+        # Find local variables derived from parameters
+        for node in function.nodes:
             for local_var in node.local_variables_written:
                 if local_var.name == amount_var:
                     # Found a local variable for the amount
@@ -78,18 +89,21 @@ class TokenAmountAnalyzer:
                                     "type": str(local_var.type),
                                     "value": right_side
                                 })
-        
+    
+    def _find_state_variables(self, contract: Contract, function: Function, amount_var: str, result: Dict) -> None:
+        """Find state variables affecting the amount variable"""
         # Find the amount variable object (param or local)
         amount_var_obj = None
         
-        # Try to find the amount variable
-        for param in target_function.parameters:
+        # Try to find the amount variable in parameters
+        for param in function.parameters:
             if param.name == amount_var or param.name == f"_{amount_var}":
                 amount_var_obj = param
                 break
         
+        # If not found in parameters, look in local variables
         if not amount_var_obj:
-            for node in target_function.nodes:
+            for node in function.nodes:
                 for local_var in node.local_variables_written:
                     if local_var.name == amount_var:
                         amount_var_obj = local_var
@@ -97,31 +111,31 @@ class TokenAmountAnalyzer:
                 if amount_var_obj:
                     break
         
-        # Trace state variables connected to amount
+        # If we found the amount variable, trace dependent state variables
         if amount_var_obj:
-            for node in target_function.nodes:
+            for node in function.nodes:
+                # Check state variables via data dependency
                 for state_var in node.state_variables_read + node.state_variables_written:
-                    # Check if state variable is related to amount via data dependency
-                    if (is_dependent(amount_var_obj, state_var, target_function) and 
+                    if (is_dependent(amount_var_obj, state_var, function) and 
                         state_var.name not in [v["name"] for v in result["state_variables"]]):
-                        
                         result["state_variables"].append({
                             "name": state_var.name,
                             "type": str(state_var.type)
                         })
                 
-                # Also check expression to find state variables that might be missed by is_dependent
+                # Also check expressions directly
                 if hasattr(node, 'expression') and node.expression:
                     expr_str = str(node.expression)
                     if amount_var in expr_str:
                         for state_var in contract.state_variables:
-                            if state_var.name in expr_str and state_var.name not in [v["name"] for v in result["state_variables"]]:
+                            if (state_var.name in expr_str and 
+                                state_var.name not in [v["name"] for v in result["state_variables"]]):
                                 result["state_variables"].append({
                                     "name": state_var.name,
                                     "type": str(state_var.type)
                                 })
         
-        # Special case for balances mapping (common in token contracts)
+        # Special case for balances mapping
         balances_found = False
         for var in result["state_variables"]:
             if var["name"] == "balances":
@@ -136,27 +150,15 @@ class TokenAmountAnalyzer:
                         "type": str(state_var.type)
                     })
                     break
-        
-        # Find all modifications to these state variables
+    
+    def _find_variable_modifications(self, contract: Contract, function_name: str, result: Dict) -> None:
+        """Find all modifications to relevant state variables"""
         for state_var in result["state_variables"]:
             var_name = state_var["name"]
             result["variable_modifications"][var_name] = []
             
-            # Check in the target function
-            for node in target_function.nodes:
-                for var in node.state_variables_written:
-                    if var.name == var_name:
-                        if hasattr(node, 'expression'):
-                            result["variable_modifications"][var_name].append({
-                                "function": function_name,
-                                "expression": str(node.expression)
-                            })
-            
-            # Check across other functions
+            # Check all functions in the contract
             for function in contract.functions:
-                if function.name == function_name:
-                    continue  # Skip target function as we already processed it
-                
                 for node in function.nodes:
                     for var in node.state_variables_written:
                         if var.name == var_name:
@@ -165,22 +167,15 @@ class TokenAmountAnalyzer:
                                     "function": function.name,
                                     "expression": str(node.expression)
                                 })
-        
-        return result
     
-    def trace_inputs_across_functions(self, contract: Contract, analysis_result: Dict) -> Dict:
-        """
-        Trace back inputs that affect state variables across functions
-        """
-        result = {
-            "function": analysis_result["function"],
-            "state_variable_inputs": {}
-        }
+    def _trace_cross_function_inputs(self, contract: Contract, analysis_result: Dict) -> Dict:
+        """Trace inputs that affect state variables across functions"""
+        result = {}
         
-        # For each state variable, find functions that modify it and their inputs
+        # For each state variable, find other functions that modify it and their inputs
         for state_var in analysis_result["state_variables"]:
             var_name = state_var["name"]
-            result["state_variable_inputs"][var_name] = []
+            result[var_name] = []
             
             # Check each function that modifies this state variable
             for modification in analysis_result["variable_modifications"].get(var_name, []):
@@ -208,7 +203,7 @@ class TokenAmountAnalyzer:
                             })
                     
                     if input_params:
-                        result["state_variable_inputs"][var_name].append({
+                        result[var_name].append({
                             "function": modifying_function_name,
                             "expression": modification["expression"],
                             "parameters": input_params
@@ -216,18 +211,21 @@ class TokenAmountAnalyzer:
         
         return result
     
-    def print_analysis_results(self, analysis_result: Dict, cross_function_inputs: Dict) -> None:
+    def print_results(self, results: Dict) -> None:
         """
-        Print analysis results in a simple format
+        Print token flow analysis results in a readable format
+        
+        Args:
+            results: The analysis results to print
         """
         print("\nAMOUNT VARIABLE ANALYSIS")
-        print("Function:", analysis_result["function"])
-        print("Target Variable:", analysis_result["target_variable"])
+        print("Function:", results["function"])
+        print("Target Variable:", results["target_variable"])
         
         # 1. Print input parameters
         print("\n1. Input parameters affecting amount:")
-        if analysis_result["inputs"]:
-            for input_var in analysis_result["inputs"]:
+        if results["inputs"]:
+            for input_var in results["inputs"]:
                 if "value" in input_var:
                     print(f"  - {input_var['name']} = {input_var['value']}")
                 else:
@@ -237,14 +235,14 @@ class TokenAmountAnalyzer:
         
         # 2. Print state variables and relevant code
         print("\n2. State variables affecting amount:")
-        if analysis_result["state_variables"]:
-            for var in analysis_result["state_variables"]:
+        if results["state_variables"]:
+            for var in results["state_variables"]:
                 print(f"  - {var['name']}")
                 
                 # Show relevant code in the target function
                 relevant_code = [
-                    mod["expression"] for mod in analysis_result["variable_modifications"].get(var["name"], [])
-                    if mod["function"] == analysis_result["function"]
+                    mod["expression"] for mod in results["variable_modifications"].get(var["name"], [])
+                    if mod["function"] == results["function"]
                 ]
                 
                 if relevant_code:
@@ -258,7 +256,7 @@ class TokenAmountAnalyzer:
         print("\n3. Inputs in other functions affecting these state variables:")
         has_inputs = False
         
-        for var_name, inputs in cross_function_inputs["state_variable_inputs"].items():
+        for var_name, inputs in results["cross_function_inputs"].items():
             if inputs:
                 has_inputs = True
                 print(f"  State variable: {var_name}")
@@ -272,38 +270,3 @@ class TokenAmountAnalyzer:
         
         if not has_inputs:
             print("  None found")
-
-
-def main():
-    """Main entry point for the token amount analyzer"""
-    if len(sys.argv) < 4:
-        print("Usage: python amount_analyzer.py <contract_file.sol> <contract_name> <function_name> [amount_variable]")
-        print("Example: python amount_analyzer.py Vault.sol Vault withdraw amount")
-        sys.exit(1)
-    
-    contract_file = sys.argv[1]
-    contract_name = sys.argv[2]
-    function_name = sys.argv[3]
-    amount_var = sys.argv[4] if len(sys.argv) > 4 else "amount"
-    
-    if not os.path.isfile(contract_file):
-        print(f"Error: File {contract_file} does not exist")
-        sys.exit(1)
-    
-    analyzer = TokenAmountAnalyzer(contract_file)
-    contract = analyzer.get_contract(contract_name)
-    
-    if not contract:
-        print(f"Error: Contract '{contract_name}' not found in {contract_file}")
-        sys.exit(1)
-    
-    # Run the analysis
-    analysis_result = analyzer.analyze_amount_relevant_variables(contract, function_name, amount_var)
-    cross_function_inputs = analyzer.trace_inputs_across_functions(contract, analysis_result)
-    
-    # Print results
-    analyzer.print_analysis_results(analysis_result, cross_function_inputs)
-
-
-if __name__ == "__main__":
-    main()
